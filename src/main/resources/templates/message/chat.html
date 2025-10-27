@@ -1,0 +1,1534 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="current-user" th:content="${currentUser}">
+    <title>SecureMessaging - Chat Seguro</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #3498db;
+            --secondary-color: #2980b9;
+            --success-color: #27ae60;
+            --danger-color: #e74c3c;
+            --warning-color: #f39c12;
+            --dark-color: #2c3e50;
+            --light-color: #ecf0f1;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f8f9fa;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .navbar-brand {
+            font-weight: bold;
+            font-size: 1.5rem;
+        }
+        
+        .sidebar {
+            background-color: white;
+            border-right: 1px solid #dee2e6;
+            height: calc(100vh - 56px);
+            overflow-y: auto;
+        }
+        
+        .chat-area {
+            height: calc(100vh - 56px);
+            display: flex;
+            flex-direction: column;
+            background-color: #f8f9fa;
+        }
+        
+        .messages-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 15px;
+            background-color: #f8f9fa;
+        }
+        
+        .message-input-area {
+            border-top: 1px solid #dee2e6;
+            padding: 15px;
+            background-color: white;
+        }
+        
+        .user-item {
+            cursor: pointer;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 5px;
+            transition: all 0.3s;
+            border-left: 3px solid transparent;
+        }
+        
+        .user-item:hover {
+            background-color: #e9ecef;
+        }
+        
+        .user-item.active {
+            background-color: var(--primary-color);
+            color: white;
+            border-left-color: var(--secondary-color);
+        }
+        
+        .message-bubble {
+            margin-bottom: 15px;
+            max-width: 70%;
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .message-sent {
+            margin-left: auto;
+        }
+        
+        .message-received {
+            margin-right: auto;
+        }
+        
+        .online-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+        
+        .online {
+            background-color: var(--success-color);
+        }
+        
+        .offline {
+            background-color: #95a5a6;
+        }
+        
+        .crypto-status {
+            font-size: 0.8rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: 5px;
+        }
+        
+        .crypto-status.active {
+            background-color: var(--success-color);
+            color: white;
+        }
+        
+        .typing-indicator {
+            font-style: italic;
+            color: #6c757d;
+            padding: 5px 15px;
+        }
+
+        .decrypting-spinner {
+            display: inline-block;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @media (max-width: 768px) {
+            .sidebar {
+                height: auto;
+                border-right: none;
+                border-bottom: 1px solid #dee2e6;
+            }
+            
+            .chat-area {
+                height: 70vh;
+            }
+            
+            .message-bubble {
+                max-width: 85%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-lock"></i> SecureMessaging
+            </a>
+            
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            
+            <div class="collapse navbar-collapse" id="navbarSupportedContent">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/chat">
+                            <i class="fas fa-comments"></i> Chat
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/encryption-status">
+                            <i class="fas fa-shield-alt"></i> Status de Criptografia
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/pki/certificates">
+                            <i class="fas fa-key"></i> Gerenciar Chaves
+                        </a>
+                    </li>
+                </ul>
+                
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-user"></i> <span id="currentUserNav" th:text="${currentUser}">Usuário</span>
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/profile"><i class="fas fa-user-circle"></i> Perfil</a></li>
+                            <li><a class="dropdown-item" href="/pki/certificates"><i class="fas fa-key"></i> Meu Certificado</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/logout"><i class="fas fa-sign-out-alt"></i> Sair</a></li>
+                        </ul>
+                    </li>
+                    <li class="nav-item">
+                        <span class="navbar-text connection-status">
+                            <span id="connectionStatus" class="text-warning">
+                                <i class="fas fa-circle"></i> <span id="connectionText">Conectando...</span>
+                            </span>
+                        </span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+    
+    <div class="container-fluid mt-3">
+        <div class="row">
+            <!-- Sidebar com lista de usuários -->
+            <div class="col-md-3">
+                <div class="sidebar p-3">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5>Contatos</h5>
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                <i class="fas fa-cog"></i>
+                            </button>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="#" id="initiateKeyExchangeBtn"><i class="fas fa-key"></i> Trocar Chaves</a></li>
+                                <li><a class="dropdown-item" href="#" id="testEncryption"><i class="fas fa-shield-alt"></i> Testar Criptografia</a></li>
+                                <li><a class="dropdown-item" href="#" id="validateCertificate"><i class="fas fa-certificate"></i> Validar Certificado</a></li>
+                                <li><a class="dropdown-item" href="#" id="generateCACert"><i class="fas fa-certificate"></i> Gerar Certificado CA</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <div class="input-group mb-3">
+                        <input type="text" class="form-control" id="userSearch" placeholder="Buscar contato...">
+                        <button class="btn btn-outline-secondary" type="button" id="searchUserBtn">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                    
+                    <div id="usersList">
+                        <div class="text-center">
+                            <i class="fas fa-spinner fa-spin"></i> Carregando usuários...
+                        </div>
+                    </div>
+                    
+                    <!-- Informações de Criptografia -->
+                    <div class="mt-4 p-3 bg-light rounded">
+                        <h6>Status de Segurança</h6>
+                        <div id="cryptoInfo">
+                            <!-- Informações sobre algoritmos criptográficos -->
+                        </div>
+                        <div id="certificateStatus">
+                            <!-- Status do certificado -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Área principal do chat -->
+            <div class="col-md-9">
+                <div class="chat-area">
+                    <!-- Cabeçalho do chat -->
+                    <div class="p-3 border-bottom bg-white d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 id="currentChatUser">Selecione um usuário para conversar</h5>
+                            <small class="text-muted" id="chatSecurityInfo"></small>
+                        </div>
+                        <div>
+                            <button class="btn btn-sm btn-outline-secondary" id="attachFileBtn" disabled>
+                                <i class="fas fa-paperclip"></i> Anexar
+                            </button>
+                            <input type="file" id="fileInput" style="display: none;" multiple>
+                        </div>
+                    </div>
+                    
+                    <!-- Área de progresso de criptografia -->
+                    <div id="cryptoProgress" class="p-2 bg-light border-bottom"></div>
+                    
+                    <!-- Área de mensagens -->
+                    <div class="messages-container" id="messagesArea">
+                        <div class="text-center text-muted mt-5">
+                            <i class="fas fa-comments fa-3x mb-3"></i>
+                            <p>Selecione um contato para iniciar uma conversa segura</p>
+                            <small class="text-muted">
+                                <i class="fas fa-lock"></i> Todas as mensagens são criptografadas de ponta a ponta
+                            </small>
+                        </div>
+                    </div>
+                    
+                    <!-- Indicador de digitação -->
+                    <div id="typingIndicator" class="typing-indicator" style="display: none;"></div>
+                    
+                    <!-- Área de pré-visualização de arquivos -->
+                    <div id="filePreviewArea" class="p-2 bg-light border-top"></div>
+                    
+                    <!-- Área de entrada de mensagens -->
+                    <div class="message-input-area">
+                        <div id="messageStatus"></div>
+                        <div class="input-group">
+                            <textarea class="form-control" id="messageInput" placeholder="Digite sua mensagem..." rows="1" disabled></textarea>
+                            <button class="btn btn-primary" type="button" id="sendMessageBtn" disabled>
+                                <i class="fas fa-paper-plane"></i>
+                            </button>
+                        </div>
+                        <div class="mt-2 d-flex justify-content-between">
+                            <small class="text-muted">
+                                <i class="fas fa-lock"></i> Mensagem será criptografada com PGP (RSA + AES)
+                            </small>
+                            <small class="text-muted" id="encryptionStatus">
+                                <i class="fas fa-shield-alt text-success"></i> Criptografia Ativa
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal para Troca de Chaves -->
+    <div class="modal fade" id="keyExchangeModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-key"></i> Troca de Chaves Diffie-Hellman
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="keyExchangeUser" class="form-label">Selecione o usuário:</label>
+                        <select class="form-select" id="keyExchangeUser">
+                            <option value="">Selecione...</option>
+                        </select>
+                    </div>
+                    
+                    <div id="keyExchangeProgress" style="display: none;">
+                        <div class="progress mb-2">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%"></div>
+                        </div>
+                        <small id="keyExchangeStatus" class="text-muted">Iniciando troca de chaves...</small>
+                    </div>
+                    
+                    <div id="dhResults" style="display: none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" id="simulateDH">Iniciar Troca</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal para Resultados de Validação -->
+    <div class="modal fade" id="validationResultModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-certificate"></i> Resultado da Validação
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="certificateValidationResult">
+                    <!-- Resultados da validação serão inseridos aqui -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Classe principal do Sistema de Mensagens Seguras
+        class SecureMessaging {
+            constructor() {
+                this.currentUser = null;
+                this.currentChatWith = null;
+                this.stompClient = null;
+                this.connected = false;
+                this.messageCache = new Map(); // Cache para mensagens descriptografadas
+                this.decryptionQueue = []; // Fila de descriptografia
+                this.isDecrypting = false;
+                this.init();
+            }
+            
+            init() {
+                this.loadCurrentUser();
+                this.bindEvents();
+                this.loadUsers();
+                this.connectWebSocket();
+            }
+            
+            loadCurrentUser() {
+                // Obter usuário do meta tag Thymeleaf
+                const metaUser = document.querySelector('meta[name="current-user"]');
+                if (metaUser) {
+                    this.currentUser = metaUser.getAttribute('content');
+                } else {
+                    // Fallback: obter do elemento do navbar
+                    const navUser = document.getElementById('currentUserNav');
+                    if (navUser) {
+                        this.currentUser = navUser.textContent.trim();
+                    }
+                }
+                
+                console.log('Usuário atual:', this.currentUser);
+                
+                if (!this.currentUser || this.currentUser === 'Usuário') {
+                    console.error('Não foi possível determinar o usuário atual');
+                    alert('Erro: Não foi possível identificar o usuário. Por favor, faça login novamente.');
+                }
+            }
+            
+            bindEvents() {
+                // Envio de mensagens
+                $(document).on('click', '#sendMessageBtn', () => this.sendMessage());
+                $(document).on('keypress', '#messageInput', (e) => {
+                    if (e.which === 13 && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                    // Enviar indicador de digitação
+                    this.sendTypingIndicator();
+                });
+                
+                // Seleção de usuário
+                $(document).on('click', '.user-item', (e) => {
+                    const username = $(e.currentTarget).data('username');
+                    this.selectUser(username);
+                });
+                
+                // Troca de chaves
+                $(document).on('click', '#initiateKeyExchangeBtn', () => this.showKeyExchangeModal());
+                $(document).on('click', '#simulateDH', () => this.initiateKeyExchange());
+                
+                // Testes de criptografia
+                $(document).on('click', '#testEncryption', () => this.testEncryption());
+                $(document).on('click', '#validateCertificate', () => this.validateCertificate());
+                $(document).on('click', '#generateCACert', () => this.generateCASignedCertificate());
+                
+                // Busca de usuários
+                $(document).on('click', '#searchUserBtn', () => this.searchUsers());
+                $(document).on('keypress', '#userSearch', (e) => {
+                    if (e.which === 13) this.searchUsers();
+                });
+                
+                // Upload de arquivos
+                $(document).on('click', '#attachFileBtn', () => $('#fileInput').click());
+                $(document).on('change', '#fileInput', (e) => this.handleFileUpload(e));
+                
+                // Auto-expansão da textarea
+                $('#messageInput').on('input', function() {
+                    this.style.height = 'auto';
+                    this.style.height = (this.scrollHeight) + 'px';
+                });
+            }
+            
+            async loadUsers() {
+                try {
+                    const response = await $.get('/api/users/all');
+                    this.displayUsers(response);
+                    this.populateKeyExchangeUsers(response);
+                } catch (error) {
+                    console.error('Erro ao carregar usuários:', error);
+                    $('#usersList').html('<div class="alert alert-danger">Erro ao carregar usuários</div>');
+                }
+            }
+            
+            async searchUsers() {
+                const query = $('#userSearch').val().trim();
+                if (!query) {
+                    this.loadUsers();
+                    return;
+                }
+                
+                try {
+                    const response = await $.get(`/api/users/search?query=${encodeURIComponent(query)}`);
+                    this.displayUsers(response);
+                } catch (error) {
+                    console.error('Erro na busca:', error);
+                }
+            }
+            
+            displayUsers(users) {
+                const usersList = $('#usersList');
+                usersList.empty();
+                
+                if (!users || users.length === 0) {
+                    usersList.html('<div class="text-muted text-center p-3">Nenhum usuário encontrado</div>');
+                    return;
+                }
+                
+                // CORREÇÃO: Filtrar o usuário atual da lista
+                const otherUsers = users.filter(user => 
+                    user.username !== this.currentUser && 
+                    user.username.toLowerCase() !== this.currentUser.toLowerCase()
+                );
+                
+                if (otherUsers.length === 0) {
+                    usersList.html('<div class="text-muted text-center p-3">Nenhum outro usuário disponível</div>');
+                    return;
+                }
+                
+                otherUsers.forEach(user => {
+                    const userItem = $(`
+                        <div class="user-item" data-username="${this.escapeHtml(user.username)}">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="online-indicator online"></span>
+                                    <strong>${this.escapeHtml(user.username)}</strong>
+                                </div>
+                                <div>
+                                    <span class="crypto-status active">
+                                        <i class="fas fa-lock"></i>
+                                    </span>
+                                    <span class="badge bg-primary rounded-pill unread-count" style="display: none;">0</span>
+                                </div>
+                            </div>
+                            <small class="text-muted ms-3">${this.escapeHtml(user.email || '')}</small>
+                        </div>
+                    `);
+                    usersList.append(userItem);
+                });
+            }
+            
+            populateKeyExchangeUsers(users) {
+                const select = $('#keyExchangeUser');
+                select.empty();
+                select.append('<option value="">Selecione...</option>');
+                
+                // CORREÇÃO: Filtrar o usuário atual
+                users.forEach(user => {
+                    if (user.username !== this.currentUser && 
+                        user.username.toLowerCase() !== this.currentUser.toLowerCase()) {
+                        select.append(`<option value="${this.escapeHtml(user.username)}">${this.escapeHtml(user.username)}</option>`);
+                    }
+                });
+            }
+            
+            selectUser(username) {
+                this.currentChatWith = username;
+                $('.user-item').removeClass('active');
+                $(`.user-item[data-username="${username}"]`).addClass('active');
+                
+                // Limpar contador de não lidas
+                $(`.user-item[data-username="${username}"] .unread-count`).text('0').hide();
+                
+                $('#currentChatUser').text(username);
+                $('#messageInput, #sendMessageBtn, #attachFileBtn').prop('disabled', false);
+                
+                // Atualizar informações de segurança
+                $('#chatSecurityInfo').html(`
+                    <i class="fas fa-shield-alt text-success"></i>
+                    Comunicação criptografada com PGP (RSA + AES-256)
+                `);
+                
+                this.loadConversation(username);
+            }
+            
+            async loadConversation(username) {
+                $('#messagesArea').html('<div class="text-center mt-5"><i class="fas fa-spinner fa-spin fa-2x"></i><p class="mt-3">Carregando conversa segura...</p></div>');
+                
+                try {
+                    const messages = await $.get(`/api/messages/conversation/${encodeURIComponent(username)}`);
+                    $('#messagesArea').empty();
+                    
+                    if (!messages || messages.length === 0) {
+                        $('#messagesArea').html(`
+                            <div class="text-center text-muted mt-5">
+                                <i class="fas fa-comments fa-3x mb-3"></i>
+                                <p>Nenhuma mensagem ainda</p>
+                                <small>Inicie uma conversa segura com <strong>${this.escapeHtml(username)}</strong></small>
+                            </div>
+                        `);
+                        return;
+                    }
+                    
+                    // Ordenar mensagens por timestamp
+                    messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                    
+                    // CORREÇÃO CRÍTICA: Descriptografar todas as mensagens
+                    for (const message of messages) {
+                        await this.decryptAndDisplayMessage(message);
+                    }
+                    
+                    this.scrollToBottom();
+                } catch (error) {
+                    console.error('Erro ao carregar conversa:', error);
+                    $('#messagesArea').html('<div class="alert alert-danger">Erro ao carregar conversa</div>');
+                }
+            }
+            
+            // CORREÇÃO CRÍTICA: Método melhorado para descriptografar mensagens
+            async decryptAndDisplayMessage(message) {
+                // Criar placeholder para a mensagem
+                const messageId = 'msg_' + message.id;
+                const isSent = message.senderUsername === this.currentUser;
+                
+                // Verificar se já está no cache
+                if (this.messageCache.has(message.id)) {
+                    message.content = this.messageCache.get(message.id);
+                    this.displayMessage(message);
+                    return;
+                }
+                
+                // Criar mensagem com spinner de descriptografia
+                const timestamp = new Date(message.timestamp).toLocaleTimeString('pt-BR', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                
+                const placeholderHtml = `
+                    <div class="message-bubble ${isSent ? 'message-sent' : 'message-received'}" id="${messageId}">
+                        <div class="card ${isSent ? 'bg-primary text-white' : 'bg-light'}">
+                            <div class="card-body p-3">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <small class="${isSent ? 'text-white-50' : 'text-muted'}">
+                                        <strong>${this.escapeHtml(message.senderUsername)}</strong>
+                                    </small>
+                                    <small class="${isSent ? 'text-white-50' : 'text-muted'}">
+                                        <i class="fas fa-lock decrypting-spinner"></i> ${timestamp}
+                                    </small>
+                                </div>
+                                <p class="mb-0">
+                                    <i class="fas fa-spinner fa-spin"></i> Descriptografando...
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                $('#messagesArea').append(placeholderHtml);
+                
+                try {
+                    // CORREÇÃO: Tentar descriptografar com retry
+                    let decryptedContent = null;
+                    let attempts = 0;
+                    const maxAttempts = 3;
+                    
+                    while (attempts < maxAttempts && !decryptedContent) {
+                        attempts++;
+                        
+                        try {
+                            const response = await $.ajax({
+                                url: `/api/messages/decrypt/${message.id}`,
+                                method: 'GET',
+                                timeout: 10000 // 10 segundos de timeout
+                            });
+                            
+                            if (response.success && response.content) {
+                                decryptedContent = response.content;
+                                
+                                // Armazenar no cache
+                                this.messageCache.set(message.id, decryptedContent);
+                                
+                                // Atualizar a mensagem
+                                const $placeholder = $(`#${messageId}`);
+                                if ($placeholder.length) {
+                                    message.content = decryptedContent;
+                                    $placeholder.replaceWith(this.createMessageHTML(message));
+                                }
+                                
+                                console.log(`✓ Mensagem ${message.id} descriptografada na tentativa ${attempts}`);
+                                break;
+                            }
+                        } catch (error) {
+                            console.warn(`Tentativa ${attempts} de descriptografia falhou:`, error);
+                            
+                            if (attempts < maxAttempts) {
+                                // Aguardar antes de tentar novamente
+                                await new Promise(resolve => setTimeout(resolve, 500 * attempts));
+                            }
+                        }
+                    }
+                    
+                    // Se falhou após todas as tentativas
+                    if (!decryptedContent) {
+                        throw new Error('Não foi possível descriptografar após múltiplas tentativas');
+                    }
+                    
+                } catch (error) {
+                    console.error('Erro ao descriptografar mensagem:', error);
+                    
+                    // Atualizar para mostrar erro
+                    const $placeholder = $(`#${messageId}`);
+                    if ($placeholder.length) {
+                        message.content = '[Erro na descriptografia]';
+                        $placeholder.replaceWith(this.createMessageHTML(message, true));
+                    }
+                }
+            }
+            
+            // NOVO MÉTODO: Criar HTML da mensagem
+            createMessageHTML(message, hasError = false) {
+                const isSent = message.senderUsername === this.currentUser;
+                const timestamp = new Date(message.timestamp).toLocaleTimeString('pt-BR', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                
+                const encryptionIcon = !hasError ? 
+                    '<i class="fas fa-lock-open text-success" title="Mensagem descriptografada"></i>' :
+                    '<i class="fas fa-exclamation-triangle text-warning" title="Erro na descriptografia"></i>';
+                
+                return `
+                    <div class="message-bubble ${isSent ? 'message-sent' : 'message-received'}">
+                        <div class="card ${isSent ? 'bg-primary text-white' : 'bg-light'}">
+                            <div class="card-body p-3">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <small class="${isSent ? 'text-white-50' : 'text-muted'}">
+                                        <strong>${this.escapeHtml(message.senderUsername)}</strong>
+                                    </small>
+                                    <small class="${isSent ? 'text-white-50' : 'text-muted'}">
+                                        ${encryptionIcon} ${timestamp}
+                                    </small>
+                                </div>
+                                <p class="mb-0" style="white-space: pre-wrap; word-wrap: break-word;">
+                                    ${this.escapeHtml(message.content)}
+                                </p>
+                                ${message.messageType && message.messageType !== 'TEXT' ? `
+                                    <div class="mt-2">
+                                        <span class="badge ${isSent ? 'bg-light text-primary' : 'bg-primary'}">${message.messageType}</span>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            displayMessage(message) {
+                const messageHTML = this.createMessageHTML(message);
+                $('#messagesArea').append(messageHTML);
+            }
+            
+            async sendMessage() {
+                const messageText = $('#messageInput').val().trim();
+                if (!messageText || !this.currentChatWith) return;
+                
+                // Verificar conexão WebSocket
+                if (!this.connected) {
+                    this.showMessageStatus('⚠️ Reconectando ao servidor...', 'warning');
+                    this.connectWebSocket();
+                    return;
+                }
+                
+                // Desabilitar botão temporariamente
+                $('#sendMessageBtn').prop('disabled', true);
+                this.showMessageStatus('🔐 Criptografando e enviando...', 'info');
+                
+                try {
+                    console.log('📤 Enviando mensagem para:', this.currentChatWith);
+                    
+                    const response = await $.ajax({
+                        url: '/api/messages/send',
+                        method: 'POST',
+                        contentType: 'application/json',
+                        data: JSON.stringify({
+                            recipient: this.currentChatWith,
+                            content: messageText,
+                            messageType: 'TEXT'
+                        })
+                    });
+                    
+                    console.log('✅ Resposta do servidor:', response);
+                    
+                    if (response.success) {
+                        $('#messageInput').val('').css('height', 'auto');
+                        this.showMessageStatus('✓ Enviada com segurança', 'success');
+                        
+                        // Adicionar ao cache
+                        this.messageCache.set(response.messageId, messageText);
+                        
+                        // Adicionar mensagem localmente para feedback imediato
+                        const messageData = {
+                            id: response.messageId,
+                            senderUsername: this.currentUser,
+                            recipientUsername: this.currentChatWith,
+                            content: messageText,
+                            timestamp: response.timestamp || new Date(),
+                            messageType: 'TEXT'
+                        };
+                        
+                        this.displayMessage(messageData);
+                        this.scrollToBottom();
+                        
+                        // NOVO: Enviar via WebSocket também para entrega imediata
+                        if (this.connected && this.stompClient) {
+                            try {
+                                console.log('📡 Enviando mensagem via WebSocket...');
+                                this.stompClient.send('/app/chat.sendMessage', {}, JSON.stringify(messageData));
+                            } catch (wsError) {
+                                console.warn('⚠️ Erro ao enviar via WebSocket (mensagem já salva):', wsError);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('❌ Erro ao enviar mensagem:', error);
+                    const errorMsg = error.responseJSON?.error || 'Erro ao enviar mensagem';
+                    this.showMessageStatus('✗ ' + errorMsg, 'danger');
+                } finally {
+                    $('#sendMessageBtn').prop('disabled', false);
+                    $('#messageInput').focus();
+                }
+            }
+            
+            async handleFileUpload(event) {
+                const file = event.target.files[0];
+                if (!file || !this.currentChatWith) {
+                    alert('Selecione um usuário para enviar o arquivo');
+                    return;
+                }
+                
+                // Validação básica
+                if (file.size > 5 * 1024 * 1024) {
+                    alert('Arquivo muito grande. Limite: 5MB');
+                    $('#fileInput').val('');
+                    return;
+                }
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('recipient', this.currentChatWith);
+                
+                try {
+                    const response = await $.ajax({
+                        url: '/api/files/upload',
+                        method: 'POST',
+                        data: formData,
+                        processData: false,
+                        contentType: false,
+                        xhr: () => {
+                            const xhr = new XMLHttpRequest();
+                            xhr.upload.addEventListener('progress', (e) => {
+                                if (e.lengthComputable) {
+                                    const percentComplete = (e.loaded / e.total) * 100;
+                                    this.showMessageStatus(`Enviando arquivo... ${Math.round(percentComplete)}%`, 'info');
+                                }
+                            });
+                            return xhr;
+                        }
+                    });
+                    
+                    if (response.success) {
+                        this.showMessageStatus('Arquivo enviado com segurança', 'success');
+                        $('#fileInput').val('');
+                        
+                        // Adicionar mensagem de arquivo
+                        this.displayMessage({
+                            id: response.fileId,
+                            senderUsername: this.currentUser,
+                            recipientUsername: this.currentChatWith,
+                            content: `📎 Arquivo: ${response.fileName} (${this.formatFileSize(response.fileSize)})`,
+                            timestamp: new Date(),
+                            messageType: 'FILE'
+                        });
+                    }
+                } catch (error) {
+                    console.error('Erro no upload:', error);
+                    const errorMsg = error.responseJSON?.error || 'Erro no upload';
+                    this.showMessageStatus('Erro: ' + errorMsg, 'danger');
+                    $('#fileInput').val('');
+                }
+            }
+            
+            formatFileSize(bytes) {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+            
+            showKeyExchangeModal() {
+                $('#keyExchangeModal').modal('show');
+            }
+            
+            async initiateKeyExchange() {
+                const targetUser = $('#keyExchangeUser').val();
+                if (!targetUser) {
+                    alert('Selecione um usuário para a troca de chaves');
+                    return;
+                }
+                
+                $('#keyExchangeProgress').show();
+                this.updateKeyExchangeProgress(0, 'Iniciando troca de chaves Diffie-Hellman...');
+                
+                try {
+                    const response = await $.ajax({
+                        url: '/api/dh/simulate',
+                        method: 'POST',
+                        contentType: 'application/json',
+                        data: JSON.stringify({ userB: targetUser })
+                    });
+                    
+                    if (response.success) {
+                        this.updateKeyExchangeProgress(100, 'Troca de chaves concluída!');
+                        this.showDHResults(response);
+                        
+                        setTimeout(() => {
+                            $('#keyExchangeModal').modal('hide');
+                            $('#keyExchangeProgress').hide();
+                            $('#dhResults').hide();
+                            $('.progress-bar').css('width', '0%');
+                        }, 3000);
+                    }
+                } catch (error) {
+                    console.error('Erro na troca de chaves:', error);
+                    const errorMsg = error.responseJSON?.error || 'Erro na troca de chaves';
+                    this.updateKeyExchangeProgress(0, 'Erro: ' + errorMsg);
+                }
+            }
+            
+            updateKeyExchangeProgress(percentage, status) {
+                $('.progress-bar').css('width', percentage + '%');
+                $('#keyExchangeStatus').text(status);
+            }
+            
+            showDHResults(response) {
+                $('#dhResults').html(`
+                    <div class="alert alert-success">
+                        <h6><i class="fas fa-key"></i> Troca de Chaves Concluída</h6>
+                        <p class="mb-2">Chaves trocadas com sucesso com <strong>${this.escapeHtml(response.userB)}</strong></p>
+                        <hr>
+                        <div class="small">
+                            <strong>Segredo compartilhado:</strong><br>
+                            <code class="text-dark">${response.sharedSecret.substring(0, 32)}...</code><br>
+                            <strong class="mt-2 d-block">Chave de sessão:</strong> ${response.sessionKeyAlgorithm} (${response.sessionKeyLength} bits)
+                        </div>
+                    </div>
+                `).show();
+            }
+            
+            async testEncryption() {
+                this.showCryptoProgress('Testando força da criptografia...', 0);
+                
+                try {
+                    const dhTest = await $.get('/api/dh/test');
+                    if (dhTest.success) {
+                        this.showCryptoProgress('Teste concluído!', 100);
+                        this.showEncryptionResult(true, dhTest);
+                    } else {
+                        this.showEncryptionResult(false, dhTest);
+                    }
+                } catch (error) {
+                    console.error('Erro no teste de criptografia:', error);
+                    this.showEncryptionResult(false, { error: error.responseJSON?.error || 'Erro no teste' });
+                }
+            }
+            
+            async validateCertificate() {
+                this.showCryptoProgress('Validando certificado...', 0);
+                
+                try {
+                    const response = await $.get('/pki/api/ca/root');
+                    this.showCryptoProgress('Validação concluída!', 100);
+                    
+                    const modalContent = `
+                        <div class="alert alert-success">
+                            <h6><i class="fas fa-certificate"></i> Certificado CA Raiz</h6>
+                            <div class="mt-3">
+                                <strong>Subject:</strong><br>
+                                <small>${this.escapeHtml(response.subject)}</small><br>
+                                
+                                <strong class="mt-2 d-block">Issuer:</strong><br>
+                                <small>${this.escapeHtml(response.issuer)}</small><br>
+                                
+                                <strong class="mt-2 d-block">Válido de:</strong> ${new Date(response.validFrom).toLocaleDateString('pt-BR')}<br>
+                                <strong>Válido até:</strong> ${new Date(response.validTo).toLocaleDateString('pt-BR')}<br>
+                                
+                                <strong class="mt-2 d-block">Fingerprint:</strong><br>
+                                <code class="small">${response.fingerprint}</code><br>
+                                
+                                <strong class="mt-2 d-block">Auto-assinado:</strong> ${response.selfSigned ? 'Sim' : 'Não'}
+                            </div>
+                        </div>
+                    `;
+                    
+                    $('#certificateValidationResult').html(modalContent);
+                    $('#validationResultModal').modal('show');
+                    
+                } catch (error) {
+                    console.error('Erro na validação:', error);
+                    this.showCryptoError('Erro na validação do certificado');
+                }
+            }
+            
+            async generateCASignedCertificate() {
+                if (!confirm('Gerar certificado assinado pela CA?\n\nIsso criará um certificado mais confiável para seu usuário.')) {
+                    return;
+                }
+                
+                this.showCryptoProgress('Gerando certificado assinado pela CA...', 0);
+                
+                try {
+                    const response = await $.post('/pki/api/certificates/generate-ca-signed');
+                    
+                    if (response.success) {
+                        this.showCryptoProgress('Certificado CA gerado com sucesso!', 100);
+                        this.showMessageStatus('Certificado CA gerado com sucesso!', 'success');
+                        
+                        setTimeout(() => {
+                            $('#cryptoProgress').empty();
+                        }, 3000);
+                    } else {
+                        this.showCryptoError('Erro: ' + response.error);
+                    }
+                } catch (error) {
+                    console.error('Erro na geração do certificado:', error);
+                    this.showCryptoError('Erro ao gerar certificado CA');
+                }
+            }
+            
+            connectWebSocket() {
+                try {
+                    console.log('🔌 Iniciando conexão WebSocket...');
+                    const socket = new SockJS('/ws');
+                    this.stompClient = Stomp.over(socket);
+                    
+                    // Desabilitar logs do STOMP (comentar para debug)
+                    this.stompClient.debug = null;
+                    
+                    this.stompClient.connect({}, (frame) => {
+                        console.log('✅ Conectado ao WebSocket:', frame);
+                        this.connected = true;
+                        this.updateConnectionStatus(true);
+                        
+                        // CRÍTICO: Inscrever para receber mensagens pessoais
+                        console.log('📥 Inscrevendo no canal /user/queue/messages...');
+                        this.stompClient.subscribe('/user/queue/messages', (message) => {
+                            console.log('📨 Mensagem WebSocket recebida:', message);
+                            try {
+                                const messageData = JSON.parse(message.body);
+                                console.log('📦 Dados parseados:', messageData);
+                                this.handleIncomingMessage(messageData);
+                            } catch (error) {
+                                console.error('❌ Erro ao processar mensagem WebSocket:', error);
+                            }
+                        });
+                        
+                        // Inscrever para indicadores de digitação
+                        console.log('⌨️ Inscrevendo no canal /user/queue/typing...');
+                        this.stompClient.subscribe('/user/queue/typing', (message) => {
+                            console.log('⌨️ Indicador de digitação recebido:', message.body);
+                            this.handleTypingIndicator(message.body);
+                        });
+                        
+                        // NOVO: Enviar mensagem de "online" ao conectar
+                        this.sendPresenceUpdate('online');
+                        
+                        console.log('✅ WebSocket totalmente configurado');
+                        
+                    }, (error) => {
+                        console.error('❌ Erro na conexão WebSocket:', error);
+                        this.connected = false;
+                        this.updateConnectionStatus(false);
+                        
+                        // Tentar reconectar após 5 segundos
+                        setTimeout(() => {
+                            console.log('🔄 Tentando reconectar ao WebSocket...');
+                            this.connectWebSocket();
+                        }, 5000);
+                    });
+                    
+                    // NOVO: Handler para desconexão
+                    socket.onclose = () => {
+                        console.warn('⚠️ WebSocket desconectado');
+                        this.connected = false;
+                        this.updateConnectionStatus(false);
+                    };
+                    
+                } catch (error) {
+                    console.error('❌ Erro ao inicializar WebSocket:', error);
+                    this.updateConnectionStatus(false);
+                }
+            }
+            
+            // NOVO: Enviar status de presença
+            sendPresenceUpdate(status) {
+                if (this.connected && this.stompClient) {
+                    try {
+                        this.stompClient.send('/app/presence', {}, JSON.stringify({
+                            username: this.currentUser,
+                            status: status,
+                            timestamp: new Date().toISOString()
+                        }));
+                        console.log('📡 Status de presença enviado:', status);
+                    } catch (error) {
+                        console.error('Erro ao enviar presença:', error);
+                    }
+                }
+            }
+            
+            // CORREÇÃO CRÍTICA: Método melhorado para lidar com mensagens recebidas via WebSocket
+            async handleIncomingMessage(messageData) {
+                console.log('✉ Nova mensagem recebida de:', messageData.senderUsername);
+                console.log('Dados da mensagem:', messageData);
+                
+                // CORREÇÃO CRÍTICA: Verificar se é uma mensagem válida
+                if (!messageData || !messageData.id) {
+                    console.error('Mensagem inválida recebida via WebSocket:', messageData);
+                    return;
+                }
+                
+                // CORREÇÃO: Descriptografar mensagem recebida via WebSocket com retry
+                if (messageData.id && (!messageData.content || messageData.content === '[Encrypted]' || messageData.content === '[Encrypted]')) {
+                    try {
+                        console.log('🔓 Descriptografando mensagem ID:', messageData.id);
+                        
+                        // Tentar descriptografar com retry
+                        let attempts = 0;
+                        let maxAttempts = 3;
+                        let decryptedContent = null;
+                        
+                        while (attempts < maxAttempts && !decryptedContent) {
+                            attempts++;
+                            
+                            try {
+                                const decryptResponse = await $.ajax({
+                                    url: `/api/messages/decrypt/${messageData.id}`,
+                                    method: 'GET',
+                                    timeout: 15000,
+                                    headers: {
+                                        'Cache-Control': 'no-cache'
+                                    }
+                                });
+                                
+                                console.log(`Tentativa ${attempts} - Resposta:`, decryptResponse);
+                                
+                                if (decryptResponse.success && decryptResponse.content) {
+                                    decryptedContent = decryptResponse.content;
+                                    messageData.content = decryptedContent;
+                                    this.messageCache.set(messageData.id, decryptedContent);
+                                    console.log(`✓ Mensagem ${messageData.id} descriptografada na tentativa ${attempts}`);
+                                    break;
+                                }
+                            } catch (error) {
+                                console.warn(`❌ Tentativa ${attempts} falhou:`, error);
+                                
+                                if (attempts < maxAttempts) {
+                                    // Aguardar antes de tentar novamente (backoff exponencial)
+                                    await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+                                }
+                            }
+                        }
+                        
+                        if (!decryptedContent) {
+                            console.error('❌ Falha na descriptografia após', maxAttempts, 'tentativas');
+                            messageData.content = '[Erro na descriptografia - Por favor, recarregue a conversa]';
+                        }
+                        
+                    } catch (error) {
+                        console.error('❌ Erro geral ao descriptografar mensagem recebida:', error);
+                        messageData.content = '[Erro na descriptografia]';
+                    }
+                }
+                
+                // Verificar se a mensagem já está descriptografada no cache
+                if (this.messageCache.has(messageData.id)) {
+                    messageData.content = this.messageCache.get(messageData.id);
+                    console.log('✓ Mensagem recuperada do cache');
+                }
+                
+                // Se for a conversa atual, adicionar à tela
+                if (this.currentChatWith === messageData.senderUsername) {
+                    console.log('📱 Exibindo mensagem na conversa atual');
+                    this.displayMessage(messageData);
+                    this.scrollToBottom();
+                    
+                    // Tocar som de notificação (opcional)
+                    this.playNotificationSound();
+                } else {
+                    console.log('🔔 Mensagem de outro usuário - mostrando notificação');
+                    // Mostrar notificação
+                    const previewText = messageData.content && messageData.content !== '[Erro na descriptografia]' 
+                        ? messageData.content.substring(0, 50) 
+                        : 'Nova mensagem criptografada';
+                    
+                    this.showNotification(`Nova mensagem de ${messageData.senderUsername}`, previewText);
+                    
+                    // Atualizar contador de não lidas
+                    this.updateUnreadCount(messageData.senderUsername);
+                }
+            }
+            
+            // NOVO: Método para tocar som de notificação
+            playNotificationSound() {
+                try {
+                    // Som simples usando Web Audio API
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const oscillator = audioContext.createOscillator();
+                    const gainNode = audioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    
+                    oscillator.frequency.value = 800;
+                    oscillator.type = 'sine';
+                    
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                    
+                    oscillator.start(audioContext.currentTime);
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                } catch (error) {
+                    // Silenciar erro se não conseguir tocar som
+                }
+            }
+            
+            handleTypingIndicator(message) {
+                $('#typingIndicator').text(message).show();
+                setTimeout(() => {
+                    $('#typingIndicator').hide();
+                }, 3000);
+            }
+            
+            sendTypingIndicator() {
+                if (this.connected && this.stompClient && this.currentChatWith) {
+                    try {
+                        this.stompClient.send('/app/typing', {}, this.currentChatWith);
+                    } catch (error) {
+                        console.error('Erro ao enviar indicador de digitação:', error);
+                    }
+                }
+            }
+            
+            updateUnreadCount(senderUsername) {
+                const userItem = $(`.user-item[data-username="${senderUsername}"]`);
+                const badge = userItem.find('.unread-count');
+                
+                let count = parseInt(badge.text()) || 0;
+                count++;
+                
+                badge.text(count).show();
+            }
+            
+            showNotification(title, message) {
+                // Notificação do navegador
+                if ('Notification' in window && Notification.permission === 'granted') {
+                    new Notification(title, {
+                        body: message.substring(0, 100),
+                        icon: '/favicon.ico',
+                        badge: '/favicon.ico'
+                    });
+                }
+                
+                // Toast interno
+                const toast = $(`
+                    <div class="position-fixed top-0 end-0 p-3" style="z-index: 11000">
+                        <div class="toast show" role="alert">
+                            <div class="toast-header bg-primary text-white">
+                                <i class="fas fa-envelope me-2"></i>
+                                <strong class="me-auto">${this.escapeHtml(title)}</strong>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+                            </div>
+                            <div class="toast-body">
+                                ${this.escapeHtml(message.substring(0, 100))}
+                            </div>
+                        </div>
+                    </div>
+                `);
+                
+                $('body').append(toast);
+                setTimeout(() => toast.remove(), 5000);
+            }
+            
+            updateConnectionStatus(connected) {
+                const statusIndicator = $('#connectionStatus');
+                const statusText = $('#connectionText');
+                
+                if (connected) {
+                    statusIndicator.removeClass('text-danger text-warning').addClass('text-success');
+                    statusText.text('Conectado');
+                    
+                    // Mostrar toast de conexão
+                    this.showToast('Conectado', 'WebSocket conectado com sucesso', 'success');
+                } else {
+                    statusIndicator.removeClass('text-success text-warning').addClass('text-danger');
+                    statusText.text('Desconectado');
+                    
+                    // Mostrar toast de desconexão
+                    this.showToast('Desconectado', 'Tentando reconectar...', 'warning');
+                }
+            }
+            
+            // NOVO: Toast simples para feedback
+            showToast(title, message, type = 'info') {
+                const bgClass = type === 'success' ? 'bg-success' : 
+                               type === 'warning' ? 'bg-warning' : 
+                               type === 'danger' ? 'bg-danger' : 'bg-info';
+                
+                const toast = $(`
+                    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 11000">
+                        <div class="toast show" role="alert">
+                            <div class="toast-header ${bgClass} text-white">
+                                <strong class="me-auto">${this.escapeHtml(title)}</strong>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+                            </div>
+                            <div class="toast-body">
+                                ${this.escapeHtml(message)}
+                            </div>
+                        </div>
+                    </div>
+                `);
+                
+                $('body').append(toast);
+                setTimeout(() => toast.remove(), 3000);
+            }
+            
+            // NOVO: Método de debug do sistema
+            debugWebSocket() {
+                console.log('=== DEBUG DO WEBSOCKET ===');
+                console.log('Usuário atual:', this.currentUser);
+                console.log('Conectado:', this.connected);
+                console.log('Cliente STOMP:', this.stompClient);
+                console.log('Chat atual com:', this.currentChatWith);
+                console.log('Cache de mensagens:', this.messageCache.size, 'mensagens');
+                console.log('========================');
+                
+                return {
+                    currentUser: this.currentUser,
+                    connected: this.connected,
+                    stompClient: this.stompClient !== null,
+                    currentChatWith: this.currentChatWith,
+                    cacheSize: this.messageCache.size
+                };
+            }
+            
+            showCryptoProgress(message, percentage) {
+                const progressHtml = `
+                    <div class="crypto-progress p-2">
+                        <div class="progress mb-1" style="height: 5px;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" 
+                                 style="width: ${percentage}%"></div>
+                        </div>
+                        <small class="text-muted">${message}</small>
+                    </div>
+                `;
+                
+                $('#cryptoProgress').html(progressHtml);
+                
+                if (percentage === 100) {
+                    setTimeout(() => {
+                        $('#cryptoProgress').empty();
+                    }, 3000);
+                }
+            }
+            
+            showEncryptionResult(success, data) {
+                const resultClass = success ? 'alert-success' : 'alert-danger';
+                const icon = success ? 'fa-check-circle' : 'fa-times-circle';
+                const message = success ? 
+                    'Sistema de criptografia funcionando perfeitamente!' : 
+                    'Problemas detectados na criptografia';
+                
+                let details = '';
+                if (success && data.logs) {
+                    details = '<div class="mt-2 small"><strong>Testes realizados:</strong><ul class="mb-0">';
+                    data.logs.slice(0, 10).forEach(log => {
+                        details += `<li>${this.escapeHtml(log)}</li>`;
+                    });
+                    details += '</ul></div>';
+                } else if (!success) {
+                    details = `<div class="mt-2"><strong>Erro:</strong> ${this.escapeHtml(data.error || 'Erro desconhecido')}</div>`;
+                }
+                
+                const resultHtml = `
+                    <div class="alert ${resultClass}">
+                        <h6><i class="fas ${icon}"></i> ${message}</h6>
+                        ${details}
+                    </div>
+                `;
+                
+                $('#cryptoProgress').html(resultHtml);
+                setTimeout(() => $('#cryptoProgress').empty(), 8000);
+            }
+            
+            showCryptoError(message) {
+                const errorHtml = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle"></i> ${this.escapeHtml(message)}
+                    </div>
+                `;
+                
+                $('#cryptoProgress').html(errorHtml);
+                setTimeout(() => $('#cryptoProgress').empty(), 5000);
+            }
+            
+            showMessageStatus(message, type) {
+                const alertClass = `alert-${type}`;
+                const statusHtml = `
+                    <div class="alert ${alertClass} alert-dismissible fade show py-2" role="alert">
+                        ${this.escapeHtml(message)}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                `;
+                
+                $('#messageStatus').html(statusHtml);
+                setTimeout(() => $('#messageStatus').empty(), 3000);
+            }
+            
+            scrollToBottom() {
+                const messagesArea = $('#messagesArea');
+                if (messagesArea.length) {
+                    messagesArea.animate({ scrollTop: messagesArea[0].scrollHeight }, 300);
+                }
+            }
+            
+            escapeHtml(text) {
+                if (!text) return '';
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+        }
+
+        // Classe para gerenciar informações de criptografia
+        class CryptoManager {
+            constructor() {
+                this.algorithms = {
+                    RSA: { keySize: 1024, description: 'RSA 1024-bit para assinatura e troca de chaves' },
+                    AES: { keySize: 256, description: 'AES 256-bit para criptografia simétrica' },
+                    DH: { keySize: 1024, description: 'Diffie-Hellman 1024-bit com PRNG 128-bit' },
+                    SHA256: { description: 'SHA-256 para verificação de integridade' },
+                    SHA3: { description: 'SHA3-256/SHA3-512 para hash avançado' }
+                };
+                this.init();
+            }
+            
+            init() {
+                this.displayCryptoInfo();
+                this.loadCertificateStatus();
+            }
+            
+            displayCryptoInfo() {
+                const infoContainer = $('#cryptoInfo');
+                let html = '<h6 class="mb-2">Algoritmos Ativos:</h6><ul class="list-unstyled small mb-0">';
+                
+                for (const [alg, info] of Object.entries(this.algorithms)) {
+                    html += `<li class="mb-1"><i class="fas fa-check-circle text-success"></i> <strong>${alg}</strong>`;
+                    if (info.keySize) html += ` (${info.keySize}-bit)`;
+                    html += `</li>`;
+                }
+                
+                html += '</ul>';
+                infoContainer.html(html);
+            }
+            
+            async loadCertificateStatus() {
+                try {
+                    const response = await $.get('/pki/api/ca/root');
+                    const validUntil = new Date(response.validTo);
+                    const isValid = validUntil > new Date();
+                    
+                    $('#certificateStatus').html(`
+                        <div class="mt-3 p-2 bg-white rounded border ${isValid ? 'border-success' : 'border-warning'}">
+                            <small class="d-block mb-1">
+                                <i class="fas fa-certificate ${isValid ? 'text-success' : 'text-warning'}"></i>
+                                <strong>Certificado CA</strong>
+                            </small>
+                            <small class="text-muted d-block">
+                                Válido até: ${validUntil.toLocaleDateString('pt-BR')}
+                            </small>
+                        </div>
+                    `);
+                } catch (error) {
+                    $('#certificateStatus').html(`
+                        <div class="mt-3 p-2 bg-white rounded border border-danger">
+                            <small>
+                                <i class="fas fa-exclamation-triangle text-danger"></i>
+                                Certificado Indisponível
+                            </small>
+                        </div>
+                    `);
+                }
+            }
+        }
+
+        // Inicialização quando o DOM estiver pronto
+        $(document).ready(function() {
+            console.log('🔐 Inicializando SecureMessaging...');
+            
+            // Inicializar gerenciador de criptografia
+            window.cryptoManager = new CryptoManager();
+            
+            // Inicializar sistema de mensagens
+            window.secureMessaging = new SecureMessaging();
+            
+            // Solicitar permissão para notificações
+            if ('Notification' in window && Notification.permission === 'default') {
+                Notification.requestPermission().then(permission => {
+                    console.log('Permissão de notificação:', permission);
+                });
+            }
+            
+            console.log('✅ SecureMessaging inicializado com sucesso');
+            
+            // NOVO: Adicionar comandos de debug ao console
+            console.log('%c🛠️ COMANDOS DE DEBUG DISPONÍVEIS:', 'color: #3498db; font-weight: bold; font-size: 14px;');
+            console.log('%cdebugWS()', 'color: #27ae60;', '- Verificar status do WebSocket');
+            console.log('%creconnectWS()', 'color: #27ae60;', '- Forçar reconexão do WebSocket');
+            console.log('%cclearCache()', 'color: #27ae60;', '- Limpar cache de mensagens');
+            console.log('%ctestMessage()', 'color: #27ae60;', '- Simular recebimento de mensagem');
+            
+            // Expor funções de debug globalmente
+            window.debugWS = () => window.secureMessaging.debugWebSocket();
+            window.reconnectWS = () => {
+                console.log('🔄 Forçando reconexão...');
+                window.secureMessaging.connectWebSocket();
+            };
+            window.clearCache = () => {
+                const size = window.secureMessaging.messageCache.size;
+                window.secureMessaging.messageCache.clear();
+                console.log(`🗑️ Cache limpo! ${size} mensagens removidas.`);
+            };
+            window.testMessage = () => {
+                const testMsg = {
+                    id: Date.now(),
+                    senderUsername: 'TestUser',
+                    recipientUsername: window.secureMessaging.currentUser,
+                    content: 'Esta é uma mensagem de teste!',
+                    timestamp: new Date(),
+                    messageType: 'TEXT'
+                };
+                console.log('📨 Simulando mensagem:', testMsg);
+                window.secureMessaging.handleIncomingMessage(testMsg);
+            };
+        });
+    </script>
+</body>
+</html>
